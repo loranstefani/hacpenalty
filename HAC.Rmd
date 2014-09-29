@@ -66,7 +66,7 @@ if (window.hljs && document.readyState && document.readyState === "complete") {
 <p>Unlike other reimbursement adjustment programs, a lower score is better, because ranking in the worst performing 25% of all hospitals earns an automatic, across-the-board 1% reduction in Medicare reimbursement for services delivered in FY2015 (October 1, 2014 - September 30, 2015).</p>
 <p>Domain 1 data can be downloaded <a href="https://data.medicare.gov/Hospital-Compare/Readmissions-Complications-and-Deaths-Hospital/7xux-kdpw" title="here">here</a> and Domain 2 measures <a href="https://data.medicare.gov/Hospital-Compare/Healthcare-Associated-Infections-Hospital/77hc-ibv8" title="here">here</a> and then pivoted and unneeded columns removed. Alternately, a few clicks into the Billian’s HealthDATA Portal can build one concise report containing all three measures for all participating hospitals<a href="#fn1" class="footnoteRef" id="fnref1"><sup>1</sup></a>.</p>
 <p>While there are several very good tools out there for this type of analysis, R is a solid open source tool that can be used on all operating systems. The Windows version 3.1.1 can be downloaded <a href="http://cran.at.r-project.org/bin/windows/base/" title="here">here</a>, and <a href="http://www.rstudio.com/" title="RStudio">RStudio</a> is a complementary (also open source) software that facilitates more productive analysis by using windows to display code/console/environment along with output.</p>
-<pre class="r"><code>setwd(&quot;C:/Backup - OD/Blog&quot;)
+<pre class="r"><code>setwd(&quot;C:/hacpenalty&quot;)
 
 HAC_PSI &lt;- read.csv(&quot;HAC_PSI.csv&quot;)
 HAC_CAUTI &lt;- read.csv(&quot;HAC_CAUTI.csv&quot;)
@@ -85,7 +85,7 @@ domain1 &lt;- HAC_PSI</code></pre>
 <li>be automatically given a Domain 2 score of 10 if no data is submitted.</li>
 </ul>
 <p>Because ICU Waiver lists were not published (other than a hint in the Federal Register that 377 hospitals were granted waivers in 2012), we ran a comparison of our Domain 1 scores to the Preliminary HAC Reduction Penalty data released by CMS to find 345 hospital’s final preliminary score matched the preliminary Domain 1 score and have identified these as ICU-waived participants, not utilizing Domain 2.</p>
-<pre class="r"><code>setwd(&quot;C:/Backup - OD/Blog&quot;)
+<pre class="r"><code>setwd(&quot;C:/hacpenalty&quot;)
 HAC_prelim &lt;- read.csv(&quot;HAC 2014-06-23-HAC-Full-Hospital-List.csv&quot;)
 domain_one_only &lt;- merge(domain1,HAC_prelim,by=c(&quot;mpn&quot;,&quot;score&quot;))</code></pre>
 <p>Of the 345 hospitals that qualified for an ICU waiver, only 61 (18%) were noted to be eligible for the penalty based on the preliminary data.</p>
@@ -138,13 +138,13 @@ all2 &lt;- within(all, quartile &lt;- as.integer(cut(score,quantile(score,probs=
 <div id="so-what-does-this-look-like-in-dollars" class="section level2">
 <h2>So what does this look like in dollars?</h2>
 <p>To get a general idea of the dollars each hospital will be penalized, we can look at past annual reimbursement<a href="#fn2" class="footnoteRef" id="fnref2"><sup>2</sup></a> figures. First, we identify which hospitals are in the worst performing 25% above. Then, we calculate 1% of their past annual reimbursement.</p>
-<pre class="r"><code>setwd(&quot;C:/Backup - OD/Blog&quot;)
+<pre class="r"><code>setwd(&quot;C:/hacpenalty&quot;)
 reimbursement &lt;- read.csv(&quot;HAC_reimbursement_past.csv&quot;)
 penalized &lt;- subset(all2,all2$quartile==4)
 all_penalties &lt;- merge(penalized,reimbursement,by=&quot;mpn&quot;)
 all_penalties$penalty_amount &lt;- all_penalties$reimbursement_amount * .1</code></pre>
 <p>Based on this analysis, using preliminary data and past reimbursement claims, the average HAC reduction penalty will be $4,291,112. We can use the Billian’s database to populate more information about each hospital and make some observations about the preliminary penalized hospitals.</p>
-<pre class="r"><code>setwd(&quot;C:/Backup - OD/Blog&quot;)
+<pre class="r"><code>setwd(&quot;C:/hacpenalty&quot;)
 hospital_data &lt;- read.csv(&quot;Hospital Export.csv&quot;)
 all_penalties &lt;- merge(all_penalties,hospital_data,by=&quot;mpn&quot;)</code></pre>
 <p>Aggregating by state, we see that the top five<a href="#fn3" class="footnoteRef" id="fnref3"><sup>3</sup></a> heavily penalized states in terms of dollars also have higher numbers of hospitals (freq). In order to aggregate by state, we install an R package called “plyr” then call it from the library to allow us to average the penalty amount by state. If you don’t already have plyr installed, you can do so by typing the following in your console: “install.packages(”plyr“)”.</p>
