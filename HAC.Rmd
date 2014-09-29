@@ -1,0 +1,174 @@
+---
+title: "HAC Penalty Analysis"
+author: "Loran Cook"
+date: "Monday, September 15, 2014"
+output:
+  html_document:
+    keep_md: yes
+---
+
+The Centers for Medicare and Medicaid Services are applying their most aggressive penalty initiative to date next month, in their efforts to transition from a fee-for-service to value-based reimbursement model. Fiscal Year 2015 marks the first year that the full Medicare reimbursement amount will be adjusted by 1% for the lowest performing twenty-five percent of hospitals measured for Hospital Acquired Conditions. 
+
+Other programs to date have imposed a percentage penalty on the Market Basket portion of the annual payment update (IQR) and a per-discharge adjustment to the base-operating Diagnosis-Related Group rate (HVBP and HRRP), affecting only a portion of Medicare reimbursement dollars. While CMS has targeted Hospital Acquired Condition reimbursement in the past, this effort is substantially larger, both in terms of measures included and reimbursement dollars affected. This exercise is an attempt to better understand how this penalty is calculated and provide readers with the tools for analysis in R, an open source statistical framework.
+
+## Release the Data!
+
+Two datasets are used to calculate the HAC Reduction Penalty; however the reporting periods requisite for final calculations have not yet been released. For the purposes of this post, we will use the preliminary data and update when the final data measurement periods are released. 
+
+Hospitals are scored in two domains: 
+
+1. Patient Safety 
+* PSI-90, a composite of eight patient safety measures
+* Weighted at 35% of the total HAC score
+
+2. Hospital Aquired Infection domain
+* Covering two Hospital Acquired Infection measures: CLABSI and CAUTI
+* Weighted at 65% of the total HAC score 
+
+Hospitals are ranked for each of the three measures, and receive 1-10 points based on their ranking. For domain 2, the two rankings are averaged for a total domain ranking. Each domain is then weighted and combined for a total HAC score.
+
+Unlike other reimbursement adjustment programs, a lower score is better, because ranking in the worst performing 25% of all hospitals earns an automatic, across-the-board 1% reduction in Medicare reimbursement for services delivered in FY2015 (October 1, 2014 - September 30, 2015).
+
+Domain 1 data can be downloaded [here][d1] and Domain 2 measures [here][d2] and then pivoted and unneeded columns removed. Alternately, a few clicks into the Billian's HealthDATA Portal can build one concise report containing all three measures for all participating hospitals[^p1]. 
+
+While there are several very good tools out there for this type of analysis, R is a solid open source tool that can be used on all operating systems. The Windows version 3.1.1 can be downloaded [here][r1], and [RStudio][r2] is a complementary (also open source) software that facilitates more productive analysis by using windows to display code/console/environment along with output. 
+
+```{r}
+setwd("C:/hacpenalty")
+
+HAC_PSI <- read.csv("HAC_PSI.csv")
+HAC_CAUTI <- read.csv("HAC_CAUTI.csv")
+HAC_CLABSI <- read.csv("HAC_CLABSI.csv")
+```
+
+### Scoring: Domain One
+
+For domain one, there is only one measure, so the hospitals should be ranked by score, and assigned a domain one score of 1-10 based on their ranking.
+
+```{r}
+HAC_PSI$PSIrank <- ave(HAC_PSI$PSIscore,FUN=rank)
+HAC_PSI$PSIrank_cut <- cut(HAC_PSI$PSIrank,10,FALSE)
+HAC_PSI$score <- HAC_PSI$PSIrank_cut
+
+domain1 <- HAC_PSI
+```
+
+Because not all hospitals have data for all three measures, CMS has allowed hospitals that do not operate an Intensive Care Unit to apply for a [waiver][d1a] to not include Domain 2 in thier total HAC score. If the waiver was granted, only Domain 1 is used. However, if the waiver was not applied for and/or granted, the hospital can either:
+
+* use one of the two measures in the domain as the total domain score, or
+* be automatically given a Domain 2 score of 10 if no data is submitted.
+
+Because ICU Waiver lists were not published (other than a hint in the Federal Register that 377 hospitals were granted waivers in 2012), we ran a comparison of our Domain 1 scores to the Preliminary HAC Reduction Penalty data released by CMS to find 345 hospital's final preliminary score matched the preliminary Domain 1 score and have identified these as ICU-waived participants, not utilizing Domain 2.
+
+```{r}
+setwd("C:/hacpenalty")
+HAC_prelim <- read.csv("HAC 2014-06-23-HAC-Full-Hospital-List.csv")
+domain_one_only <- merge(domain1,HAC_prelim,by=c("mpn","score"))
+```
+
+Of the 345 hospitals that qualified for an ICU waiver, only 61 (18%) were noted to be eligible for the penalty based on the preliminary data.
+```{r}
+summary(domain_one_only$Preliminary.Penalty)
+```
+
+
+### Scoring: Domain Two
+Domain Two scores the average of two measure rankings, then weights that score by .65. Similar to the exception above for Domain 1, if a hospital does not have enough data to calculate PSI 90 for Domain 1 but it has “complete data” for at least one measure in Domain 2, its Total HAC Score will depend entirely on its Domain 2 score according to the [Federal Register][d2a].
+
+However, if a hospital did not get an ICU Waiver and did not submit at least one of the two measures in domain one, they are given a score of 10 for Domain 2. 
+```{r}
+HAC_CLABSI$CLABSIrank <- ave(HAC_CLABSI$CLABSIscore,FUN=rank)
+HAC_CLABSI$CLABSIrank_cut <- cut(HAC_CLABSI$CLABSIrank,10,FALSE)
+
+HAC_CAUTI$CAUTIrank <- ave(HAC_CAUTI$CAUTIscore,FUN=rank)
+HAC_CAUTI$CAUTIrank_cut <- cut(HAC_CAUTI$CAUTIrank,10,FALSE)
+
+domain2_all <- merge(HAC_CLABSI,HAC_CAUTI,by="mpn",all="TRUE")
+domain_2_CLABSI_only <- subset(domain2_all,is.na(domain2_all$CAUTIscore))
+domain_2_CLABSI_only$d2score <- domain_2_CLABSI_only$CLABSIrank_cut
+domain_2_CAUTI_only <- subset(domain2_all,is.na(domain2_all$CLABSIscore))
+domain_2_CAUTI_only$d2score <- domain_2_CAUTI_only$CAUTIrank_cut
+domain_2_both <- na.omit(domain2_all)
+domain_2_both$d2score <- (domain_2_both$CLABSIrank_cut + domain_2_both$CAUTIrank_cut)/2
+
+domain2 <- rbind(domain_2_CLABSI_only,domain_2_CAUTI_only,domain_2_both)
+```
+
+We must identify which hospitals provided Domain 2 but no Domain 1 scores before weighting both Domains.
+
+```{r}
+domain_both <- merge(x = domain1, y = domain2, by = "mpn", all.y=TRUE)
+domain_two_only <- subset(domain_both,is.na(domain_both$score))
+domain_both <- na.omit(domain_both)
+```
+
+For the 1898 hospitals that reported at least one measure in each domain, we are within .3 points of the calculated preliminary HAC score published by CMS. It should be clear upon the October 1 penalty publication which hospitals did not receive an ICU waiver, and this article will be updated at that time.
+
+
+## Find the Worst Scoring 25% of Hospitals
+
+The two weighted domain scores are then merged into one score for each hospital. The hospitals with only one domain represented are then added back into the mix, and the lowest performing 25% are assessed the HAC Penalty. 
+
+```{r}
+domain_both$score_weighted_2 <- domain_both$d2score * .65
+domain_both$score_weighted_1 <- domain_both$score * .35
+domain_both$score_total <- domain_both$score_weighted_1 + domain_both$score_weighted_2
+
+one <- domain_one_only[,c("mpn","score")]
+two <- domain_two_only[,c("mpn","d2score")]
+both <- domain_both[,c("mpn","score_total")]
+colnames(two)[2] <- "score"
+colnames(both)[2] <- "score"
+all <- rbind(one,two,both)
+all2 <- within(all, quartile <- as.integer(cut(score,quantile(score,probs=0:4/4),include.lowest=TRUE)))
+```
+Of the 2357 observations with quality data available, the 567 of lowest scoring hospitals averaged a ranked score of 7.93. This average will likely increase, as there are 3353 hospitals participating in the program and an extended reporting peirod of data to be released. It is also unclear at this time how the hospitals automatically assigned a domain score of 10 due to non-compliance will affect the rankings of the other participants in the program. For the purposes of this study, they were removed altogether from the ranking process.
+
+## So what does this look like in dollars?
+
+To get a general idea of the dollars each hospital will be penalized, we can look at past annual reimbursement[^1] figures. First, we identify which hospitals are in the worst performing 25% above. Then, we calculate 1% of their past annual reimbursement.  
+
+```{r}
+setwd("C:/hacpenalty")
+reimbursement <- read.csv("HAC_reimbursement_past.csv")
+penalized <- subset(all2,all2$quartile==4)
+all_penalties <- merge(penalized,reimbursement,by="mpn")
+all_penalties$penalty_amount <- all_penalties$reimbursement_amount * .1
+```
+
+Based on this analysis, using preliminary data and past reimbursement claims, the average HAC reduction penalty will be $4,291,112. We can use the Billian's database to populate more information about each hospital and make some observations about the preliminary penalized hospitals. 
+
+```{r}
+setwd("C:/hacpenalty")
+hospital_data <- read.csv("Hospital Export.csv")
+all_penalties <- merge(all_penalties,hospital_data,by="mpn")
+```
+
+Aggregating by state, we see that the top five[^n1] heavily penalized states in terms of dollars also have higher numbers of hospitals (freq). In order to aggregate by state, we install an R package called "plyr" then call it from the library to allow us to average the penalty amount by state. If you don't already have plyr installed, you can do so by typing the following in your console: "install.packages("plyr")". 
+```{r}
+library(plyr)
+avg_state <- aggregate(penalty_amount ~ State,all_penalties,sum)
+count_state <- count(all_penalties,vars = "State")
+state_penalties <- merge(avg_state,count_state,by="State")
+
+state_penalties$State_rank_amt <- ave(state_penalties$penalty_amount,FUN=rank)
+state_penalties$State_rank_fq <- ave(state_penalties$freq,FUN=rank)
+
+head(state_penalties[ order(-state_penalties[,4], state_penalties[,5]),])
+
+
+```
+
+In conclusion, these data are useful in understanding how the HAC Reduction Program will assess penalties in October, however, until final reporting period data are released, they are nothing more than preliminary numbers. We anticipate an update to this article once the final quality and penalty data is released.
+
+Doing other cool things with this data? We'd love to see and share!
+
+[d1]: https://data.medicare.gov/Hospital-Compare/Readmissions-Complications-and-Deaths-Hospital/7xux-kdpw "here"
+[d2]: https://data.medicare.gov/Hospital-Compare/Healthcare-Associated-Infections-Hospital/77hc-ibv8 "here"
+[d1a]: https://www.federalregister.gov/articles/2013/08/19/2013-18956/medicare-program-hospital-inpatient-prospective-payment-systems-for-acute-care-hospitals-and-the#p-2866 "waiver"
+[d2a]: https://www.federalregister.gov/articles/2013/08/19/2013-18956/medicare-program-hospital-inpatient-prospective-payment-systems-for-acute-care-hospitals-and-the#p-2873 "Federal Register"
+[r1]: http://cran.at.r-project.org/bin/windows/base/ "here"
+[r2]: http://www.rstudio.com/ "RStudio"
+[^p1]: Through the dashboard, click on Hospital build a report tool, select "Add a Data Point" and choose "All Data Points" (at the bottom), then "Hospital Quality". From there you can click into Hospital Acquired Conditions and select CLABSI and CAUTI scores, or go through AHRQ to find "Patient Safety for Selected Indicators".
+[^1]: Privacy-supressed Medicare reimbursement amounts for CY2012. Most estimates will be lower than actual Medicare reimbursements for a full fiscal year.
+[^n1]: Massachusetts (MA) was excluded from the penalty program due to other payment arrangements with Medicare, however their hospital quality scores were included in the analysis and appear to be part of the national rankings, based on preliminary data releases.
